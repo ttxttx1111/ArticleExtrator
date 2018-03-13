@@ -102,13 +102,15 @@ public class Main {
      * 5. insert into mongodb
      */
     public static void extractArticle(Properties prop){
-        MongoCursor<Document> cursor = readFromMongo(prop);
-        Map<String, List<Article>> categoryToArticleMap = makeMap(cursor,300);
-
-        categoryToArticleMap = cleanCategory(categoryToArticleMap, 100);
-        List<Article> articleList = extractArticleFromMap(categoryToArticleMap, 1000);
-        saveToMongo(articleList, prop);
-        reportArticleList(categoryToArticleMap);
+        MongoCursor<Document> cursor = readFromMongo_Article(prop);
+//        Map<String, List<Article>> categoryToArticleMap = makeMap(cursor,300);
+//        categoryToArticleMap = cleanCategory(categoryToArticleMap, 100);
+//        List<Article> articleList = extractArticleFromMap(categoryToArticleMap, 1000);
+//        saveToMongo(articleList, prop);
+        ;
+        HashMap<String,Integer> channelMap = countChannel(cursor);
+        reportChannelMap(channelMap);
+//        reportArticleList(categoryToArticleMap);
     }
 
     private static void reportArticleList(Map<String, List<Article>> categoryToArticleMap) {
@@ -116,8 +118,23 @@ public class Main {
         for(Map.Entry<String, List<Article>> entry:categoryToArticleMap.entrySet()){
             reportString += entry.getKey() + ": " + entry.getValue().size() + "\n";
         }
+        output(reportString, "ExtractedArticle");
+    }
+
+    private static void reportChannelMap(Map<String, Integer> channelMap) {
+        String reportString = "";
+
+        reportString += "channel count:\n";
+        for(Map.Entry<String, Integer> entry:channelMap.entrySet()){
+            reportString += entry.getKey() + ": " + entry.getValue() + "\n";
+        }
+        String fileName = "ChannelCount";
+        output(reportString,fileName);
+    }
+
+    private static void output(String reportString,String fileName){
         try {
-            OutputStreamWriter fw = new OutputStreamWriter(new FileOutputStream(new File("Extracted_article")));
+            OutputStreamWriter fw = new OutputStreamWriter(new FileOutputStream(new File(fileName)));
             fw.write(reportString);
             fw.flush();
             fw.close();
@@ -163,7 +180,11 @@ public class Main {
         System.out.println("Start to extract articles");
         int mapSize = categoryToArticleMap.size();
         int numOfEachCategory = totalNum / mapSize;
+        int numOfExtra = totalNum - mapSize * numOfEachCategory;
+        boolean extraFlag = true;
         List<Article> articleList = new ArrayList();
+
+
         for(Map.Entry<String, List<Article>> entry:categoryToArticleMap.entrySet()){
             if(numOfEachCategory > entry.getValue().size()){
                 System.out.println("extract num is unreasonable,");
@@ -171,6 +192,11 @@ public class Main {
                 System.exit(1);
             }
             articleList.addAll(entry.getValue().subList(0, numOfEachCategory));
+
+            if(extraFlag && ((numOfEachCategory+numOfExtra) <= entry.getValue().size())){
+                articleList.addAll(entry.getValue().subList(numOfEachCategory, numOfEachCategory + numOfExtra));
+                extraFlag = false;
+            }
         }
         return articleList;
     }
@@ -201,6 +227,31 @@ public class Main {
         return categoryToArticleMap;
     }
 
+    private static HashMap<String, Integer> countChannel(MongoCursor<Document> cursor){
+        System.out.println("Start to process articles");
+        HashMap<String, Integer> channelMap = new HashMap<>();
+        Gson gson = new Gson();
+        int count = 0;
+        while(cursor.hasNext()){
+            String s = cursor.next().toJson();
+            Article article = gson.fromJson(s, Article.class);
+           String channel = article.getChannel();
+
+
+            if(channelMap.containsKey(channel)){
+                channelMap.put(channel, channelMap.get(channel)+1);
+            }else{
+                channelMap.put(channel, 1);
+            }
+            count++;
+            if(count % 1000 == 0){
+                System.out.println("Article processed:" + count);
+            }
+        }
+
+        return channelMap;
+    }
+
     private static Map<String,List<Article>> makeMap(MongoCursor<Document> cursor, int thresh) {
         System.out.println("Start to process articles");
         Map<String, List<Article>> categoryToArticleMap = new HashMap<>();
@@ -222,9 +273,9 @@ public class Main {
 
             if(categoryToArticleMap.containsKey(category)){
                 List<Article> articleList = categoryToArticleMap.get(category);
-                if(articleList.size() < thresh){
+//                if(articleList.size() < thresh){
                     articleList.add(article);
-                }
+//                }
             }else{
                 List<Article> articleList = new ArrayList<>();
                 articleList.add(article);
@@ -240,7 +291,7 @@ public class Main {
 
     }
 
-    private static MongoCursor<Document> readFromMongo(Properties prop) {
+    private static MongoCursor<Document> readFromMongo_Article(Properties prop) {
         String mongoURI = prop.getProperty("mongoURI");
         String mongoDatabase =  prop.getProperty("mongoDatabase");
         String mongoArticleCollection =  prop.getProperty("mongoArticleCollection");
@@ -256,6 +307,25 @@ public class Main {
         final MongoCollection<Document> articleCollection = database.getCollection(mongoArticleCollection);
 
         MongoCursor<Document> cursor = articleCollection.find().iterator();
+        return cursor;
+    }
+
+    private static MongoCursor<Document> readFromMongo_Image(Properties prop) {
+        String mongoURI = prop.getProperty("mongoURI");
+        String mongoDatabase =  prop.getProperty("mongoDatabase");
+        String mongoImageCollection =  prop.getProperty("mongoImageCollection");
+        System.out.println(mongoImageCollection);
+
+        MongoClientURI connectionString = new MongoClientURI(mongoURI);
+        MongoClient mongoClient= new MongoClient(connectionString);
+
+        CodecRegistry pojoCodecRegistry = fromRegistries(MongoClient.getDefaultCodecRegistry(),
+                fromProviders(PojoCodecProvider.builder().automatic(true).build()));
+        MongoDatabase database = mongoClient.getDatabase(mongoDatabase).withCodecRegistry(pojoCodecRegistry);
+
+        final MongoCollection<Document> imageCollection = database.getCollection(mongoImageCollection);
+
+        MongoCursor<Document> cursor = imageCollection.find().iterator();
         return cursor;
     }
 
@@ -275,8 +345,35 @@ public class Main {
     public static void main(String[] args) {
         Properties prop = readProp("settings.properties");
 //        makeStatistics(prop);
-        extractArticle(prop);
+        countNonEmptyDescription(prop);
     }
+
+    private static void countNonEmptyDescription(Properties prop) {
+        MongoCursor<Document> cursor = readFromMongo_Image(prop);
+//        HashMap<String,Integer> channelMap = countChannel(cursor);
+//        reportChannelMap(channelMap);
+        System.out.println("Start to process images");
+        HashMap<String, Integer> channelMap = new HashMap<>();
+        Gson gson = new Gson();
+        int count = 0;
+        int imageNum = 0;
+        while(cursor.hasNext()){
+            String s = cursor.next().toJson();
+            ValidImage image= gson.fromJson(s, ValidImage.class);
+            String des = image.getImgDescription();
+            if(des.equals(""))count++;
+            if(count % 1000 == 0){
+                System.out.println("Article processed:" + count);
+            }
+            imageNum++;
+        }
+
+        String reportString = "Nonemptydescription number is:" + count +
+                              "Image number is:" + imageNum;
+        output(reportString, "nonemptydescription");
+        System.out.println(reportString);
+    }
+
 
 
 }
